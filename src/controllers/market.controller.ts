@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { Market } from "../entities/market.entity";
 import AppDataSource from "../data/data-source";
+import { MailService } from "../services/mail/mail.service";
 
 interface IDataSelling {
   id: number;
@@ -10,23 +11,29 @@ interface IDataSelling {
   settled: boolean;
 }
 
+const router = Router();
+const marketRepository = AppDataSource.getRepository(Market);
+const requiredFields = ["product_name", "product_value", "buyer"];
 
+// NOTE: middlewares para validar os campos obrigatórios e validar se existe o item na operação.
 const validateFields = (requiredFields: string[]) => {
   return (req: Request, res: Response, next: NextFunction) => {
     const missingFields: string[] = [];
 
-    requiredFields.forEach(fields => {
-      if(!req.body[fields]) {
-        missingFields.push(fields)
+    requiredFields.forEach((fields) => {
+      if (!req.body[fields]) {
+        missingFields.push(fields);
       }
-    })
+    });
 
-    if(missingFields.length > 0) {
-      return res.status(400).json({ message: `${missingFields.join(", ")} is a required field.` })
+    if (missingFields.length > 0) {
+      return res
+        .status(400)
+        .json({ message: `${missingFields.join(", ")} is a required field.` });
     }
 
     next();
-  }
+  };
 };
 
 const validateById = () => {
@@ -34,60 +41,99 @@ const validateById = () => {
     const { id } = req.params;
 
     const sellings = await marketRepository.find();
-    const hasId = sellings.map(item => item.id);
-    
-    if(!hasId.includes(parseInt(id))) {
-      return res.status(404).json({ message: "Venda não encontrada" })
+    const hasId = sellings.map((item) => item.id);
+
+    if (!hasId.includes(parseInt(id))) {
+      return res.status(404).json({ message: "Venda não encontrada" });
     }
 
     next();
-  }
-}
+  };
+};
 
-const router = Router();
-const marketRepository = AppDataSource.getRepository(Market);
-const requiredFields = ["product_name", "product_value"];
-
+// NOTE: Rotas.
 router.get("/", async (_, res: Response) => {
   const response = await marketRepository.find();
 
   return res.send(response);
-})
+});
 
 router.get("/:id", validateById(), async (req: Request, res: Response) => {
   const { id } = req.params;
-  const sellingById = await marketRepository.findOne({ where: { id: parseInt(id) } })
+  const sellingById = await marketRepository.findOne({
+    where: { id: parseInt(id) },
+  });
 
   return res.send(sellingById);
-})
+});
 
-router.post("/create-selling", validateFields(requiredFields), async (req: Request, res: Response) => {
-  const data: IDataSelling = req.body;
-  const createSelling = marketRepository.create(data);
+router.post(
+  "/create-selling",
+  validateFields(requiredFields),
+  async (req: Request, res: Response) => {
+    const { id, settled = false, ...data }: IDataSelling = req.body;
+    const createSelling = marketRepository.create({ settled, ...data });
 
-  await marketRepository.save(createSelling);
+    await marketRepository.save(createSelling);
 
-  return res.status(201).json({ message:'Venda realizada com sucesso.' });
-})
+    res.status(201).json({ message: "Venda realizada com sucesso." });
 
-router.patch("/update-selling/:id", validateById(), async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const findSelling = await marketRepository.findOne({ where: { id: parseInt(id) } });
+    return MailService.sendEmail();
+  }
+);
 
-  findSelling.settled = true;
+router.put(
+  "/update-all-selling/:id",
+  validateFields(requiredFields),
+  validateById(),
+  async (req: Request, res: Response) => {
+    const { settled, ...data } = req.body;
+    const { id } = req.params;
 
-  await marketRepository.save(findSelling);
+    const findSellingById = await marketRepository.findOne({
+      where: { id: parseInt(id) },
+    });
 
-  return res.status(201).json({ message:"Venda atualizada com sucesso."});
-})
+    Object.assign(findSellingById, { settled, ...data });
 
-router.delete("/delete-selling/:id", validateById(), async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const deleteSelling = await marketRepository.findOne({ where: { id: parseInt(id) } });
+    await marketRepository.save(findSellingById);
 
-  await marketRepository.delete(deleteSelling);
+    return res
+      .status(200)
+      .json({ message: "Venda total atualizada com sucesso." });
+  }
+);
 
-  return res.status(201).json({ message: "Venda excluída com sucesso." })
-})
+router.patch(
+  "/update-selling/:id",
+  validateById(),
+  async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const findSelling = await marketRepository.findOne({
+      where: { id: parseInt(id) },
+    });
+
+    findSelling.settled = true;
+
+    await marketRepository.save(findSelling);
+
+    return res.status(200).json({ message: "Venda atualizada com sucesso." });
+  }
+);
+
+router.delete(
+  "/delete-selling/:id",
+  validateById(),
+  async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const deleteSelling = await marketRepository.findOne({
+      where: { id: parseInt(id) },
+    });
+
+    await marketRepository.delete(deleteSelling);
+
+    return res.status(200).json({ message: "Venda excluída com sucesso." });
+  }
+);
 
 export default router;
